@@ -221,7 +221,7 @@ static int add(int argc, const char **argv)
 
 	if (fetch_tags != TAGS_DEFAULT) {
 		strbuf_reset(&buf);
-		strbuf_addf(&buf, "remote.%s.tagopt", name);
+		strbuf_addf(&buf, "remote.%s.tagOpt", name);
 		git_config_set(buf.buf,
 			       fetch_tags == TAGS_SET ? "--tags" : "--no-tags");
 	}
@@ -712,7 +712,7 @@ static int mv(int argc, const char **argv)
 
 	strbuf_reset(&buf);
 	strbuf_addf(&buf, "remote.%s.fetch", rename.new_name);
-	git_config_set_multivar(buf.buf, NULL, NULL, 1);
+	git_config_set_multivar(buf.buf, NULL, NULL, CONFIG_FLAGS_MULTI_REPLACE);
 	strbuf_addf(&old_remote_context, ":refs/remotes/%s/", rename.old_name);
 	for (i = 0; i < oldremote->fetch.raw_nr; i++) {
 		char *ptr;
@@ -746,7 +746,7 @@ static int mv(int argc, const char **argv)
 		}
 		if (info->push_remote_name && !strcmp(info->push_remote_name, rename.old_name)) {
 			strbuf_reset(&buf);
-			strbuf_addf(&buf, "branch.%s.pushremote", item->string);
+			strbuf_addf(&buf, "branch.%s.pushRemote", item->string);
 			git_config_set(buf.buf, rename.new_name);
 		}
 	}
@@ -938,9 +938,6 @@ static int get_remote_ref_states(const char *name,
 				 struct ref_states *states,
 				 int query)
 {
-	struct transport *transport;
-	const struct ref *remote_refs;
-
 	states->remote = remote_get(name);
 	if (!states->remote)
 		return error(_("No such remote: '%s'"), name);
@@ -948,10 +945,12 @@ static int get_remote_ref_states(const char *name,
 	read_branches();
 
 	if (query) {
+		struct transport *transport;
+		const struct ref *remote_refs;
+
 		transport = transport_get(states->remote, states->remote->url_nr > 0 ?
 			states->remote->url[0] : NULL);
 		remote_refs = transport_get_remote_refs(transport, NULL);
-		transport_disconnect(transport);
 
 		states->queried = 1;
 		if (query & GET_REF_STATES)
@@ -960,6 +959,7 @@ static int get_remote_ref_states(const char *name,
 			get_head_names(remote_refs, states);
 		if (query & GET_PUSH_REF_STATES)
 			get_push_ref_states(remote_refs, states);
+		transport_disconnect(transport);
 	} else {
 		for_each_ref(append_ref_to_tracked_list, states);
 		string_list_sort(&states->tracked);
@@ -1491,7 +1491,8 @@ static int update(int argc, const char **argv)
 
 static int remove_all_fetch_refspecs(const char *key)
 {
-	return git_config_set_multivar_gently(key, NULL, NULL, 1);
+	return git_config_set_multivar_gently(key, NULL, NULL,
+					      CONFIG_FLAGS_MULTI_REPLACE);
 }
 
 static void add_branches(struct remote *remote, const char **branches,
@@ -1686,7 +1687,8 @@ static int set_url(int argc, const char **argv)
 	if (!delete_mode)
 		git_config_set_multivar(name_buf.buf, newurl, oldurl, 0);
 	else
-		git_config_set_multivar(name_buf.buf, NULL, oldurl, 1);
+		git_config_set_multivar(name_buf.buf, NULL, oldurl,
+					CONFIG_FLAGS_MULTI_REPLACE);
 out:
 	strbuf_release(&name_buf);
 	return 0;

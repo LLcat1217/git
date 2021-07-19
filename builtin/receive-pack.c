@@ -54,6 +54,7 @@ static int receive_unpack_limit = -1;
 static int transfer_unpack_limit = -1;
 static int advertise_atomic_push = 1;
 static int advertise_push_options;
+static int advertise_sid;
 static int unpack_limit = 100;
 static off_t max_input_size;
 static int report_status;
@@ -248,6 +249,11 @@ static int receive_pack_config(const char *var, const char *value, void *cb)
 		return 0;
 	}
 
+	if (strcmp(var, "transfer.advertisesid") == 0) {
+		advertise_sid = git_config_bool(var, value);
+		return 0;
+	}
+
 	return git_default_config(var, value, cb);
 }
 
@@ -268,6 +274,8 @@ static void show_ref(const char *path, const struct object_id *oid)
 			strbuf_addf(&cap, " push-cert=%s", push_cert_nonce);
 		if (advertise_push_options)
 			strbuf_addstr(&cap, " push-options");
+		if (advertise_sid)
+			strbuf_addf(&cap, " session-id=%s", trace2_session_id());
 		strbuf_addf(&cap, " object-format=%s", the_hash_algo->name);
 		strbuf_addf(&cap, " agent=%s", git_user_agent_sanitized());
 		packet_write_fmt(1, "%s %s%c%s\n",
@@ -321,7 +329,7 @@ static void write_head_info(void)
 	for_each_alternate_ref(show_one_alternate_ref, &seen);
 	oidset_clear(&seen);
 	if (!sent_capabilities)
-		show_ref("capabilities^{}", &null_oid);
+		show_ref("capabilities^{}", null_oid());
 
 	advertise_shallow_grafts(1);
 
@@ -350,7 +358,7 @@ static void proc_receive_ref_append(const char *prefix)
 	char *p;
 	int len;
 
-	ref_pattern = xcalloc(1, sizeof(struct proc_receive_ref));
+	CALLOC_ARRAY(ref_pattern, 1);
 	p = strchr(prefix, ':');
 	if (p) {
 		while (prefix < p) {
@@ -756,7 +764,7 @@ static void prepare_push_cert_sha1(struct child_process *proc)
 
 		memset(&sigcheck, '\0', sizeof(sigcheck));
 
-		bogs = parse_signature(push_cert.buf, push_cert.len);
+		bogs = parse_signed_buffer(push_cert.buf, push_cert.len);
 		check_signature(push_cert.buf, bogs, push_cert.buf + bogs,
 				push_cert.len - bogs, &sigcheck);
 
@@ -1016,7 +1024,7 @@ static int read_proc_receive_report(struct packet_reader *reader,
 			}
 			if (new_report) {
 				if (!hint->report) {
-					hint->report = xcalloc(1, sizeof(struct ref_push_report));
+					CALLOC_ARRAY(hint->report, 1);
 					report = hint->report;
 				} else {
 					report = hint->report;
@@ -2042,7 +2050,7 @@ static void queue_commands_from_cert(struct command **tail,
 		die("malformed push certificate %.*s", 100, push_cert->buf);
 	else
 		boc += 2;
-	eoc = push_cert->buf + parse_signature(push_cert->buf, push_cert->len);
+	eoc = push_cert->buf + parse_signed_buffer(push_cert->buf, push_cert->len);
 
 	while (boc < eoc) {
 		const char *eol = memchr(boc, '\n', eoc - boc);
@@ -2075,6 +2083,7 @@ static struct command *read_head_info(struct packet_reader *reader,
 		if (linelen < reader->pktlen) {
 			const char *feature_list = reader->line + linelen + 1;
 			const char *hash = NULL;
+			const char *client_sid;
 			int len = 0;
 			if (parse_feature_request(feature_list, "report-status"))
 				report_status = 1;
@@ -2097,6 +2106,12 @@ static struct command *read_head_info(struct packet_reader *reader,
 			}
 			if (xstrncmpz(the_hash_algo->name, hash, len))
 				die("error: unsupported object format '%s'", hash);
+			client_sid = parse_feature_value(feature_list, "session-id", &len, NULL);
+			if (client_sid) {
+				char *sid = xstrndup(client_sid, len);
+				trace2_data_string("transfer", NULL, "client-sid", client_sid);
+				free(sid);
+			}
 		}
 
 		if (!strcmp(reader->line, "push-cert")) {
@@ -2260,7 +2275,7 @@ static const char *unpack(int err_fd, struct shallow_info *si)
 		status = start_command(&child);
 		if (status)
 			return "index-pack fork failed";
-		pack_lockfile = index_pack_lockfile(child.out);
+		pack_lockfile = index_pack_lockfile(child.out, NULL);
 		close(child.out);
 		status = finish_command(&child);
 		if (status)
@@ -2298,11 +2313,9 @@ static void prepare_shallow_update(struct shallow_info *si)
 	ALLOC_ARRAY(si->used_shallow, si->shallow->nr);
 	assign_shallow_commits_to_refs(si, si->used_shallow, NULL);
 
-	si->need_reachability_test =
-		xcalloc(si->shallow->nr, sizeof(*si->need_reachability_test));
-	si->reachable =
-		xcalloc(si->shallow->nr, sizeof(*si->reachable));
-	si->shallow_ref = xcalloc(si->ref->nr, sizeof(*si->shallow_ref));
+	CALLOC_ARRAY(si->need_reachability_test, si->shallow->nr);
+	CALLOC_ARRAY(si->reachable, si->shallow->nr);
+	CALLOC_ARRAY(si->shallow_ref, si->ref->nr);
 
 	for (i = 0; i < si->nr_ours; i++)
 		si->need_reachability_test[si->ours[i]] = 1;
